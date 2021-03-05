@@ -1,0 +1,11 @@
+## Check anaconda.org for new package versions
+channels:
+ - bioconda
+ - conda-forge
+ - defaults
+dependencies:
+ - fastqc=0.11.9
+ - adapterremoval=2.3.1
+ - star=2.7.7a
+ - gatk4=4.2.0.0
+ - samtools=1.11
