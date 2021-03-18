@@ -33,7 +33,7 @@ STAR   --runThreadN 16   --genomeDir /hpcfs/users/a1647910/refs/ensembl-release-
 Number of fastq files for each mate = 1
 
    Input read files for mate 1 :
--rw-r--r-- 1 a1647910 CATS_STUDENTS 3448737401 Mar  2 16:34 01_trimmedData/fastq/S5_1.fq.gz
+-rw-r--r-- 1 a1647910 CATS_STUDENTS 3448737401 Mar 15 12:50 01_trimmedData/fastq/S5_1.fq.gz
 
    readsCommandsFile:
 exec > "02_alignedData/bam/S5__STARtmp/tmp.fifo.read1"
@@ -42,7 +42,7 @@ gunzip -c      "01_trimmedData/fastq/S5_1.fq.gz"
 
 
    Input read files for mate 2 :
--rw-r--r-- 1 a1647910 CATS_STUDENTS 3594341576 Mar  2 16:34 01_trimmedData/fastq/S5_2.fq.gz
+-rw-r--r-- 1 a1647910 CATS_STUDENTS 3594341576 Mar 15 12:50 01_trimmedData/fastq/S5_2.fq.gz
 
    readsCommandsFile:
 exec > "02_alignedData/bam/S5__STARtmp/tmp.fifo.read2"
@@ -1066,7 +1066,7 @@ Number of real (reference) chromosomes= 993
 991	KN150216.1	1020	1601961984
 992	KN150481.1	1008	1602224128
 993	KN150525.1	650	1602486272
-Started loading the genome: Thu Mar  4 11:34:30 2021
+Started loading the genome: Mon Mar 15 12:52:22 2021
 
 Genome: size given as a parameter = 1678412758
 SA: size given as a parameter = 11914392777
@@ -1080,7 +1080,7 @@ Loading Genome ... done! state: good=1 eof=0 fail=0 bad=0; loaded 1678412758 byt
 SA file size: 11914392777 bytes; state: good=1 eof=0 fail=0 bad=0
 Loading SA ... done! state: good=1 eof=0 fail=0 bad=0; loaded 11914392777 bytes
 Loading SAindex ... done: 1565873619 bytes
-Finished loading the genome: Thu Mar  4 11:34:55 2021
+Finished loading the genome: Mon Mar 15 12:52:48 2021
 
 Processing splice junctions database sjdbN=253058,   pGe.sjdbOverhang=149 
 alignIntronMax=alignMatesGapMax=0, the max intron size will be approximately determined by (2^winBinNbits)*winAnchorDistNbins=589824
@@ -1089,10 +1089,10 @@ Created thread # 2
 Created thread # 3
 Created thread # 4
 Created thread # 5
+Created thread # 6
 Starting to map file # 0
 mate 1:   01_trimmedData/fastq/S5_1.fq.gz
 mate 2:   01_trimmedData/fastq/S5_2.fq.gz
-Created thread # 6
 Created thread # 7
 Created thread # 8
 Created thread # 9
@@ -1102,23 +1102,22 @@ Created thread # 12
 Created thread # 13
 Created thread # 14
 Created thread # 15
-Thread #14 end of input stream, nextChar=-1
-Completed: thread #0
-Completed: thread #6
-Completed: thread #4
-Completed: thread #2
-Completed: thread #8
+Thread #1 end of input stream, nextChar=-1
 Completed: thread #14
-Completed: thread #11
-Completed: thread #15
-Completed: thread #3
-Completed: thread #10
-Completed: thread #13
-Completed: thread #12
-Completed: thread #7
 Completed: thread #9
+Completed: thread #10
+Completed: thread #8
+Completed: thread #4
+Completed: thread #6
 Completed: thread #1
+Completed: thread #7
+Completed: thread #15
+Completed: thread #12
+Completed: thread #0
 Joined thread # 1
+Completed: thread #3
+Completed: thread #11
+Completed: thread #2
 Joined thread # 2
 Joined thread # 3
 Joined thread # 4
@@ -1131,12 +1130,13 @@ Joined thread # 9
 Joined thread # 10
 Joined thread # 11
 Joined thread # 12
+Completed: thread #13
 Joined thread # 13
 Joined thread # 14
 Joined thread # 15
-Mar 04 11:53:20   Loaded database junctions from the generated genome /hpcfs/users/a1647910/refs/ensembl-release-94/danio_rerio/star//sjdbList.out.tab: 253058 total junctions
+Mar 15 13:12:33   Loaded database junctions from the generated genome /hpcfs/users/a1647910/refs/ensembl-release-94/danio_rerio/star//sjdbList.out.tab: 253058 total junctions
 
-Mar 04 11:53:20   Loaded database junctions from the 1st pass file: 02_alignedData/bam/S5__STARpass1//SJ.out.tab: 554101 total junctions
+Mar 15 13:12:33   Loaded database junctions from the 1st pass file: 02_alignedData/bam/S5__STARpass1//SJ.out.tab: 554101 total junctions
 
 WARNING: long repeat for junction # 15588 : 10 19596636 19597001; left shift = 255; right shift = 58
 WARNING: long repeat for junction # 49248 : 14 2194821 2201680; left shift = 255; right shift = 67
@@ -1146,18 +1146,18 @@ WARNING: long repeat for junction # 130121 : 21 25216740 25219252; left shift = 
 WARNING: long repeat for junction # 271448 : 10 19596636 19597001; left shift = 255; right shift = 58
 WARNING: long repeat for junction # 310671 : 14 2194821 2201680; left shift = 255; right shift = 67
 WARNING: long repeat for junction # 326031 : 15 29652210 29666695; left shift = 33; right shift = 255
-Mar 04 11:53:21   Finished preparing junctions
-Mar 04 11:53:21 ..... inserting junctions into the genome indices
-Mar 04 11:53:34   Finished SA search: number of new junctions=97798, old junctions=253058
-Mar 04 11:53:51   Finished sorting SA indicesL nInd=58228576
+Mar 15 13:12:34   Finished preparing junctions
+Mar 15 13:12:34 ..... inserting junctions into the genome indices
+Mar 15 13:12:48   Finished SA search: number of new junctions=97798, old junctions=253058
+Mar 15 13:13:05   Finished sorting SA indicesL nInd=58228576
 Genome size with junctions=1707654360  1602748416   104905944
 GstrandBit1=32   GstrandBit=32
-Mar 04 11:54:32   Finished inserting junction indices
-Mar 04 11:54:45   Finished SAi
-Mar 04 11:54:45 ..... finished inserting junctions into genome
+Mar 15 13:13:49   Finished inserting junction indices
+Mar 15 13:14:02   Finished SAi
+Mar 15 13:14:02 ..... finished inserting junctions into genome
 
    Input read files for mate 1 :
--rw-r--r-- 1 a1647910 CATS_STUDENTS 3448737401 Mar  2 16:34 01_trimmedData/fastq/S5_1.fq.gz
+-rw-r--r-- 1 a1647910 CATS_STUDENTS 3448737401 Mar 15 12:50 01_trimmedData/fastq/S5_1.fq.gz
 
    readsCommandsFile:
 exec > "02_alignedData/bam/S5__STARtmp/tmp.fifo.read1"
@@ -1166,7 +1166,7 @@ gunzip -c      "01_trimmedData/fastq/S5_1.fq.gz"
 
 
    Input read files for mate 2 :
--rw-r--r-- 1 a1647910 CATS_STUDENTS 3594341576 Mar  2 16:34 01_trimmedData/fastq/S5_2.fq.gz
+-rw-r--r-- 1 a1647910 CATS_STUDENTS 3594341576 Mar 15 12:50 01_trimmedData/fastq/S5_2.fq.gz
 
    readsCommandsFile:
 exec > "02_alignedData/bam/S5__STARtmp/tmp.fifo.read2"
@@ -1177,12 +1177,12 @@ Created thread # 1
 Created thread # 2
 Created thread # 3
 Created thread # 4
-Created thread # 5
-Created thread # 6
-Created thread # 7
 Starting to map file # 0
 mate 1:   01_trimmedData/fastq/S5_1.fq.gz
 mate 2:   01_trimmedData/fastq/S5_2.fq.gz
+Created thread # 5
+Created thread # 6
+Created thread # 7
 Created thread # 8
 Created thread # 9
 Created thread # 10
@@ -1191,88 +1191,88 @@ Created thread # 12
 Created thread # 13
 Created thread # 14
 Created thread # 15
-BAM sorting: 178975 mapped reads
+BAM sorting: 179390 mapped reads
 BAM sorting bins genomic start loci:
-1	0	24356176
-2	0	56155364
-3	1	32037648
-4	2	11260432
-5	3	312659
-6	3	26025154
-7	4	19305428
-8	5	5864970
-9	5	32882066
-10	6	2883145
-11	6	33745324
-12	7	23962649
-13	7	45202964
-14	8	1299337
-15	9	38787
-16	9	41273718
-17	10	5357795
-18	10	10855776
-19	10	42547964
-20	11	2478599
-21	11	32655584
-22	12	10546469
-23	12	47942652
-24	13	6724702
-25	13	43169098
-26	14	27284592
-27	15	17476184
-28	15	35691633
-29	16	26482680
-30	17	20670288
-31	18	18399354
-32	18	26350301
-33	18	37559753
-34	18	55127704
-35	19	2055243
-36	20	823435
-37	20	32213750
-38	20	32308434
-39	20	44808717
-40	21	10032911
-41	21	39309321
-42	21	54179714
-43	22	29952406
-44	22	57904054
-45	23	21099569
-46	23	52109019
-47	24	33325571
-48	25	7624
-Thread #3 end of input stream, nextChar=-1
-Completed: thread #1
+1	0	24358498
+2	0	56572168
+3	1	32903057
+4	2	12603241
+5	3	1399081
+6	3	25883668
+7	4	18676217
+8	5	6946748
+9	5	32882873
+10	6	11686373
+11	6	46354049
+12	7	23980034
+13	7	51885789
+14	8	14815509
+15	9	5233627
+16	10	174318
+17	10	5363272
+18	10	22409635
+19	10	43121380
+20	11	12307968
+21	11	45419993
+22	12	23387634
+23	12	51207114
+24	13	19061777
+25	14	555178
+26	14	35180930
+27	15	19712718
+28	15	39809847
+29	16	37275216
+30	17	31153718
+31	18	18563816
+32	18	29894446
+33	18	40526383
+34	18	55131600
+35	19	9998750
+36	20	1955741
+37	20	32262754
+38	20	33286383
+39	20	55921137
+40	21	12867973
+41	21	39309625
+42	21	55072073
+43	22	29955335
+44	22	58746038
+45	23	21207656
+46	23	52714255
+47	24	33784014
+48	25	7667
+Thread #12 end of input stream, nextChar=-1
+Completed: thread #14
 Completed: thread #3
-Completed: thread #7
+Completed: thread #12
+Completed: thread #8
+Completed: thread #13
+Completed: thread #11
+Completed: thread #2
+Completed: thread #6
+Completed: thread #1
 Completed: thread #9
+Completed: thread #10
 Completed: thread #0
 Joined thread # 1
-Completed: thread #4
-Completed: thread #6
-Completed: thread #13
-Completed: thread #15
-Completed: thread #11
-Completed: thread #14
-Completed: thread #12
-Completed: thread #2
 Joined thread # 2
 Joined thread # 3
-Joined thread # 4
+Completed: thread #7
+Completed: thread #15
 Completed: thread #5
+Completed: thread #4
+Joined thread # 4
 Joined thread # 5
 Joined thread # 6
 Joined thread # 7
-Completed: thread #8
 Joined thread # 8
 Joined thread # 9
-Completed: thread #10
 Joined thread # 10
 Joined thread # 11
 Joined thread # 12
 Joined thread # 13
 Joined thread # 14
 Joined thread # 15
-Mar 04 12:25:44 ..... started sorting BAM
-Max memory needed for sorting = 712989366
+Mar 15 13:47:19 ..... started sorting BAM
+Max memory needed for sorting = 690073682
 ALL DONE!
