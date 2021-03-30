@@ -1,0 +1,503 @@
+---
+title: "Template"
+author: "Lachlan Baer"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    fig_width: 8
+    fig_height: 6
+    fig_align: "center"
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  error = FALSE, 
+  fig.align = "center"
+)
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+```
+
+# Setup 
+
+```{r packages}
+library(tidyverse)
+library(magrittr)
+library(parallel)
+library(here)
+library(SeqArray)
+library(AnnotationHub)
+library(purrr)
+```
+
+```{r options}
+if (interactive()) setwd(here::here())
+theme_set(theme_bw())
+cores <- detectCores() - 2
+```
+
+## Annotation
+
+```{r}
+ah <- AnnotationHub() %>%
+  subset(species == "Danio rerio") %>%
+  subset(rdataclass == "EnsDb")
+ensDb <- ah[["AH64906"]]
+genes <- genes(ensDb)
+mcols(genes) <- mcols(genes)[
+  c("gene_id", "gene_name", "gene_biotype", "entrezid")
+]
+```
+
+## topTable
+
+```{r}
+topTable <- read_csv(here("ext_data/FMR1vWildtype.csv"))
+```
+
+# GDS file
+
+```{r}
+vcfPath <- "/hpcfs/users/a1647910/210305_chromosomeProject/2_fmr1/11_filterVariants/mergedVcf/mergedVcf.vcf.gz"
+gdsPath <- "/hpcfs/users/a1647910/210305_chromosomeProject/2_fmr1/11_filterVariants/gds/mergedGds.gds"
+makeGds <-!file.exists(gdsPath)
+if (makeGds) {
+  dir.create(dirname(gdsPath))
+  seqVCF2GDS(vcfPath, gdsPath)
+}
+```
+
+```{r}
+gds <- seqOpen(gdsPath, readonly = FALSE)
+print(gds, all=TRUE, attribute=TRUE)
+```
+
+# Metadata
+
+```{r}
+samples <- seqGetData(gds, "sample.id")
+```
+
+```{r}
+seqResetFilter(gds)
+drChrs <- paste(c(1:25))
+allSnps <- tibble(
+  variant.id = seqGetData(gds, "variant.id"),
+  chromosome = seqGetData(gds, "chromosome"),
+  position = seqGetData(gds, "position"),
+  allele = seqGetData(gds, "allele")
+) %>%
+  dplyr::filter(chromosome %in% drChrs) %>%
+  as_tibble()
+```
+
+# Summary plot function
+
+```{r}
+plotVariants <- function(geneName, countFilt = 9) {
+  
+  ## Get gene information
+  sym <- geneName
+  goi <- subset(genes, gene_name == sym)
+  geneSnps <- allSnps %>%
+    dplyr::filter(
+      chromosome == as.character(seqnames(goi)), 
+      position >= start(goi),
+      position <= end(goi)
+    )
+  ## Samples per genotype
+  wt <- str_detect(samples, "A|D|G|L")
+  mut <- str_detect(samples, "S")
+  
+  ## Get WT counts 
+  wtCounts <- lapply(geneSnps$variant.id, function(x){
+    seqResetFilter(gds)
+    seqSetFilter(gds, variant.sel = x, sample.sel = wt)
+    als <- seqGetData(gds, "allele") %>%
+      str_split(",") %>% 
+      unlist()
+    seqGetData(gds, "annotation/format/AD")$data %>%
+      t() %>%
+      rowSums(na.rm = TRUE) %>%
+      set_names(als) %>%
+      bind_rows() %>%
+      mutate(variant.id = x)
+  }) %>%
+    purrr::reduce(full_join) %>%
+    right_join(geneSnps) %>%
+    dplyr::select(
+      variant.id, chromosome, position, allele, 
+      A, C, G, T, everything()
+    )
+  ## Filter for single base substitutions
+  snpFilt_wt <- wtCounts$allele %>%
+    lapply(function(x){
+      strs <- str_split(x, ",") %>%
+        unlist()
+      lapply(strs, function(x){
+        nchar(x) %>%
+          equals(1)
+      }) %>%
+        unlist() %>%
+        all()
+    }) %>%
+    unlist()
+  ## Filter for variants with at least 10 counts
+  countFilt_wt <- wtCounts %>%
+    dplyr::select(-variant.id, -chromosome, -position, -allele) %>%
+    rowSums(na.rm = TRUE) %>%
+    is_greater_than(countFilt)
+  ## Combine filters to return TRUE only if both filters are TRUE
+  filt_wt <- Reduce("&", list(snpFilt_wt, countFilt_wt))
+  ## Apply filters
+  wtCounts_filt <- wtCounts[filt_wt,] %>%
+    dplyr::select(variant.id, chromosome, position, allele, A, C, G, T) %>%
+    mutate(genotype = "Wildtype")
+  
+  ## Get mutant counts
+  mutCounts <- lapply(geneSnps$variant.id, function(x){
+    seqResetFilter(gds)
+    seqSetFilter(gds, variant.sel = x, sample.sel = mut)
+    als <- seqGetData(gds, "allele") %>%
+      str_split(",") %>% 
+      unlist()
+    seqGetData(gds, "annotation/format/AD")$data %>%
+      t() %>%
+      rowSums(na.rm = TRUE) %>%
+      set_names(als) %>%
+      bind_rows() %>%
+      mutate(variant.id = x)
+  }) %>%
+    purrr::reduce(full_join) %>%
+    right_join(geneSnps) %>%
+    dplyr::select(
+      variant.id, chromosome, position, allele, 
+      A, C, G, T, everything()
+    )
+  ## Filter for single base substitutions
+  snpFilt_mut <- mutCounts$allele %>%
+    lapply(function(x){
+      strs <- str_split(x, ",") %>%
+        unlist()
+      lapply(strs, function(x){
+        nchar(x) %>%
+          equals(1)
+      }) %>%
+        unlist() %>%
+        all()
+    }) %>%
+    unlist()
+  ## Filter for variants with at least 10 counts
+  countFilt_mut <- mutCounts %>%
+    dplyr::select(-variant.id, -chromosome, -position, -allele) %>%
+    rowSums(na.rm = TRUE) %>%
+    is_greater_than(countFilt)
+  ## Combine filters to return TRUE only if both filters are TRUE
+  filt_mut <- Reduce("&", list(snpFilt_mut, countFilt_mut))
+  ## Apply filters
+  mutCounts_filt <- mutCounts[filt_mut,] %>%
+    dplyr::select(variant.id, chromosome, position, allele, A, C, G, T) %>%
+    mutate(genotype = "Mutant")
+  
+  ## Summarise and plot
+  allCounts <- full_join(mutCounts_filt, wtCounts_filt)
+  posLab <- dplyr::arrange(allCounts, position) %>%
+    pull(position) %>%
+    unique()
+  alLab <- dplyr::arrange(allCounts, position) %>%
+    distinct(position, allele) %>%
+    pull(allele)
+  allCounts %>%
+    mutate(position = as.factor(position)) %>%
+    pivot_longer(cols = c("A", "C", "G", "T"), names_to = "base") %>% 
+    na.omit() %>%
+    ggplot(aes(
+      x = position, 
+      y = value, 
+      fill = base, 
+      group = dplyr::arrange(., genotype, position, desc(value)) %>% 
+        pull(base)
+    )) +
+    geom_bar(position = "fill", stat = "identity") +
+    facet_wrap(~genotype, ncol = 2, scales = "free_x") +
+    scale_fill_manual(values = c("darkblue", "orange", "darkgreen", "darkred")) +
+    labs(
+      title = sym, 
+      x = "Position (Ref,Alt)", 
+      y = sym, 
+      fill = "Allele"
+    ) +
+    scale_x_discrete(labels = paste0(posLab, " (", alLab, ")")) +
+    theme(
+      # axis.text.x = element_text(angle = -45, hjust = 0)
+      axis.text.x = element_blank(),
+      axis.text.y = element_blank(),
+      strip.background = element_blank(),
+      strip.text.x = element_blank(),
+      axis.title.x = element_blank(),
+      plot.title = element_blank(),
+      axis.ticks = element_blank()
+    )
+  
+}
+```
+
+## Genes of interest
+
+```{r}
+deGoi <- c("fmr1", "smtnl1", "CU468164.1", "slc7a2", "si:dkey-35h6.1",
+           "plekhf1", "ctsf", "rnf4", "cyp4v7", "si:dkey-31g6.6",
+           "pcdh1g1", "gla", "si:dkey-85k7.7", "rtkn2a", "slco1d1",
+           "znf1179", "cidec", "mgst2", "nocta", "zgc:66433", "atat1")
+deGR <- subset(genes, gene_name %in% deGoi)
+deTib <- tibble(
+  symbol = mcols(deGR)$gene_name,
+  chromosome = as.vector(seqnames(deGR)),
+  start = start(deGR),
+  end = end(deGR),
+  geneId = mcols(deGR)$gene_id
+) %>%
+  dplyr::filter(chromosome %in% drChrs) %>% 
+  dplyr::arrange(chromosome, start)
+```
+
+```{r}
+deChr14 <- dplyr::filter(deTib, chromosome == 14) %>%
+  pull(symbol)
+ndeChr14 <- dplyr::filter(deTib, chromosome != 14) %>%
+  pull(symbol)
+```
+
+```{r}
+## Choose 10 random genes not in chr 14 with high p-value and expression
+set.seed(17)
+deOther <- topTable %>%
+  dplyr::filter(
+    chromosome_name != 14, 
+    adj.P.Val > 0.99,
+    AveExpr > 5
+  ) %>%
+  pull(external_gene_name) %>%
+  sample(10)
+```
+
+```{r}
+deChr14plots <- lapply(deChr14, plotVariants, 20)
+ggarrange(
+  plotlist = deChr14plots,
+  ncol = 1,
+  label.x = "Allele percent",
+  common.legend = TRUE, 
+  legend = "right"
+)
+```
+
+```{r}
+ndeChr14plots <- lapply(ndeChr14, plotVariants, 1)
+ggarrange(
+  plotlist = ndeChr14plots,
+  ncol = 1,
+  label.x = "Allele percent",
+  common.legend = TRUE, 
+  legend = "right"
+)
+```
+
+# Variants
+
+## Gene-specific variants
+
+```{r}
+sym <- "si:dkey-35h6.1"
+goi <- subset(genes, gene_name == sym)
+geneSnps <- allSnps %>%
+  dplyr::filter(
+    chromosome == as.character(seqnames(goi)), 
+    position >= start(goi),
+    position <= end(goi)
+  )
+```
+
+```{r}
+## Samples per genotype
+wt <- str_detect(samples, "A|D|G|L")
+mut <- str_detect(samples, "S")
+```
+
+## WT samples
+
+```{r}
+## Get counts 
+wtCounts <- lapply(geneSnps$variant.id, function(x){
+  seqResetFilter(gds)
+  seqSetFilter(gds, variant.sel = x, sample.sel = wt)
+  als <- seqGetData(gds, "allele") %>%
+    str_split(",") %>% 
+    unlist()
+  seqGetData(gds, "annotation/format/AD")$data %>%
+    t() %>%
+    rowSums(na.rm = TRUE) %>%
+    set_names(als) %>%
+    bind_rows() %>%
+    mutate(variant.id = x)
+}) %>%
+  purrr::reduce(full_join) %>%
+  right_join(geneSnps) %>%
+  dplyr::select(
+    variant.id, chromosome, position, allele, 
+    A, C, G, T, everything()
+  )
+```
+
+```{r}
+## Filter for single base substitutions
+snpFilt_wt <- wtCounts$allele %>%
+  lapply(function(x){
+    strs <- str_split(x, ",") %>%
+      unlist()
+    lapply(strs, function(x){
+      nchar(x) %>%
+        equals(1)
+    }) %>%
+      unlist() %>%
+      all()
+  }) %>%
+  unlist()
+## Filter for variants with at least 10 counts
+countFilt_wt <- wtCounts %>%
+  dplyr::select(-variant.id, -chromosome, -position, -allele) %>%
+  rowSums(na.rm = TRUE) %>%
+  is_greater_than(9)
+## Combine filters to return TRUE only if both filters are TRUE
+filt_wt <- Reduce("&", list(snpFilt_wt, countFilt_wt))
+```
+
+```{r}
+## Apply filters
+wtCounts_filt <- wtCounts[filt_wt,] %>%
+  dplyr::select(variant.id, chromosome, position, allele, A, C, G, T) %>%
+  mutate(genotype = "Wildtype")
+```
+
+## Mutant samples
+
+```{r}
+mutCounts <- lapply(geneSnps$variant.id, function(x){
+  seqResetFilter(gds)
+  seqSetFilter(gds, variant.sel = x, sample.sel = mut)
+  als <- seqGetData(gds, "allele") %>%
+    str_split(",") %>% 
+    unlist()
+  seqGetData(gds, "annotation/format/AD")$data %>%
+    t() %>%
+    rowSums(na.rm = TRUE) %>%
+    set_names(als) %>%
+    bind_rows() %>%
+    mutate(variant.id = x)
+}) %>%
+  purrr::reduce(full_join) %>%
+  right_join(geneSnps) %>%
+  dplyr::select(
+    variant.id, chromosome, position, allele, 
+    A, C, G, T, everything()
+  )
+```
+
+```{r}
+## Filter for single base substitutions
+snpFilt_mut <- mutCounts$allele %>%
+  lapply(function(x){
+    strs <- str_split(x, ",") %>%
+      unlist()
+    lapply(strs, function(x){
+      nchar(x) %>%
+        equals(1)
+    }) %>%
+      unlist() %>%
+      all()
+  }) %>%
+  unlist()
+## Filter for variants with at least 10 counts
+countFilt_mut <- mutCounts %>%
+  dplyr::select(-variant.id, -chromosome, -position, -allele) %>%
+  rowSums(na.rm = TRUE) %>%
+  is_greater_than(9)
+## Combine filters to return TRUE only if both filters are TRUE
+filt_mut <- Reduce("&", list(snpFilt_mut, countFilt_mut))
+```
+
+```{r}
+## Apply filters
+mutCounts_filt <- mutCounts[filt_mut,] %>%
+  dplyr::select(variant.id, chromosome, position, allele, A, C, G, T) %>%
+  mutate(genotype = "Mutant")
+```
+
+## Summary
+
+```{r}
+allCounts <- full_join(mutCounts_filt, wtCounts_filt)
+posLab <- dplyr::arrange(allCounts, position) %>%
+  pull(position) %>%
+  unique()
+alLab <- dplyr::arrange(allCounts, position) %>%
+  distinct(position, allele) %>%
+  pull(allele)
+allCounts %>%
+  mutate(position = as.factor(position)) %>%
+  pivot_longer(cols = c("A", "C", "G", "T"), names_to = "base") %>% 
+  na.omit() %>%
+  ggplot(aes(
+    x = position, 
+    y = value, 
+    fill = base, 
+    group = dplyr::arrange(., genotype, position, desc(value)) %>% 
+      pull(base)
+  )) +
+  geom_bar(position = "fill", stat = "identity") +
+  facet_wrap(~genotype, ncol = 2, scales = "free_x") +
+  scale_fill_manual(values = c("darkblue", "orange", "darkgreen", "darkred")) +
+  labs(
+    title = sym, 
+    x = "Position (Ref,Alt)", 
+    y = "Allele percent", 
+    fill = "Allele"
+  ) +
+  scale_x_discrete(labels = paste0(posLab, " (", alLab, ")")) +
+  theme(axis.text.x = element_text(angle = -45, hjust = 0))
+```
+
+---
+
+```{r seshInfo}
+sessionInfo()
+```
+
+```{r, echo=FALSE, eval=FALSE}
+# ## Filter for biallelic SNPs
+# biFilt_wt <- wtCounts %>%
+#   is.na() %>%
+#   as_tibble() %>%
+#   dplyr::select(-variant.id, -chromosome, -position, -allele) %>%
+#   `!` %>%
+#   rowSums() %>%
+#   equals(2)
+# ## Filter for single base substitutions
+# snpFilt_wt <- wtCounts$allele %>%
+#   lapply(function(x){
+#     str_split(x, ",") %>%
+#       unlist() %>%
+#       nchar() %>%
+#       sum() %>%
+#       equals(2)
+#   }) %>%
+#   unlist()
+```
