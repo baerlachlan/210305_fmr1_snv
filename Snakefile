@@ -30,10 +30,12 @@ rule all:
 		expand("01_trimmedData/FastQC/{SAMPLE}_{PAIR}_fastqc.{EXT}", SAMPLE = SAMPLES, PAIR = PAIR_ID, EXT = FQC_EXT),
 		expand("02_alignedData/FastQC/{SAMPLE}_Aligned.sortedByCoord.out_fastqc.{EXT}", SAMPLE = SAMPLES, EXT = FQC_EXT),
 		expand("03_markDuplicates/FastQC/{SAMPLE}_fastqc.{EXT}", SAMPLE = SAMPLES, EXT = FQC_EXT),
-		# expand("11_filterVariants/vcf/{SAMPLE}.vcf.gz", SAMPLE = SAMPLES),
-		# expand("11_filterVariants/vcf/{SAMPLE}.vcf.gz.tbi", SAMPLE = SAMPLES)
-		expand("12_mergeVcfs/vcf/mergedVcf.vcf.gz", SAMPLE = SAMPLES),
-		expand("12_mergeVcfs/vcf/mergedVcf.vcf.gz.tbi", SAMPLE = SAMPLES)
+		"10_callVariants/mergedVcf/mergedVcf.vcf.gz",
+		"10_callVariants/mergedVcf/mergedVcf.vcf.gz.tbi",
+		"11_filterVariants/mergedVcf/mergedVcf.vcf.gz",
+		"11_filterVariants/mergedVcf/mergedVcf.vcf.gz.tbi",
+		"12_selectVariants/mergedVcf/mergedVcf.vcf.gz",
+		"12_selectVariants/mergedVcf/mergedVcf.vcf.gz.tbi"
 
 rule fastqc_raw:
 	input:
@@ -213,14 +215,10 @@ rule fastqc_align:
 rule mark_duplicates:
 	input:
 		"02_alignedData/bam/{SAMPLE}_Aligned.sortedByCoord.out.bam"
-		# "02_alignedData/bam/A_Aligned.sortedByCoord.out.bam"
 	output:
 		bam = "03_markDuplicates/bam/{SAMPLE}.bam",
 		bamIndex = "03_markDuplicates/bam/{SAMPLE}.bai",
 		metrics = "03_markDuplicates/log/{SAMPLE}.metrics"
-		# bam = "03_markDuplicates/bam/A.bam",
-		# bamIndex = "03_markDuplicates/bam/A.bai",
-		# metrics = "03_markDuplicates/log/A.metrics"
 	conda:
 		"snakemake/envs/default.yaml"
 	resources:
@@ -511,6 +509,27 @@ rule callVariants:
 		--standard-min-confidence-threshold-for-calling 20
 		"""
 
+rule mergeCalled:
+	input:
+		vcf = expand("10_callVariants/vcf/{SAMPLE}.vcf.gz", SAMPLE = SAMPLES),
+		vcfIndex = expand("10_callVariants/vcf/{SAMPLE}.vcf.gz.tbi", SAMPLE = SAMPLES)
+	output:
+		vcf = "10_callVariants/mergedVcf/mergedVcf.vcf.gz",
+		vcfIndex = "10_callVariants/mergedVcf/mergedVcf.vcf.gz.tbi"
+	conda:
+		"snakemake/envs/default.yaml"
+	resources:
+		cpu = 2,
+		ntasks = 1,
+		mem_mb = 8000,
+		hours = 6,
+		mins = 0
+	shell:
+		"""
+		bcftools merge --threads {resources.cpu} -o {output.vcf} -O z {input.vcf}
+		bcftools index --threads {resources.cpu} -t {output.vcf}
+		"""
+
 rule filterVariants:
 	input:
 		vcf = "10_callVariants/vcf/{SAMPLE}.vcf.gz",
@@ -544,13 +563,13 @@ rule filterVariants:
 			-O {output.vcf}
 		"""
 
-rule mergeVcfs:
+rule mergeFiltered:
 	input:
 		vcf = expand("11_filterVariants/vcf/{SAMPLE}.vcf.gz", SAMPLE = SAMPLES),
 		vcfIndex = expand("11_filterVariants/vcf/{SAMPLE}.vcf.gz.tbi", SAMPLE = SAMPLES)
 	output:
-		vcf = "12_mergeVcfs/vcf/mergedVcf.vcf.gz",
-		vcfIndex = "12_mergeVcfs/vcf/mergedVcf.vcf.gz.tbi"
+		vcf = "11_filterVariants/mergedVcf/mergedVcf.vcf.gz",
+		vcfIndex = "11_filterVariants/mergedVcf/mergedVcf.vcf.gz.tbi"
 	conda:
 		"snakemake/envs/default.yaml"
 	resources:
@@ -558,6 +577,52 @@ rule mergeVcfs:
 		ntasks = 1,
 		mem_mb = 8000,
 		hours = 6,
+		mins = 0
+	shell:
+		"""
+		bcftools merge --threads {resources.cpu} -o {output.vcf} -O z {input.vcf}
+		bcftools index --threads {resources.cpu} -t {output.vcf}
+		"""
+
+rule selectVariants:
+	input:
+		vcf = "11_filterVariants/vcf/{SAMPLE}.vcf.gz",
+		refFa = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa"
+	output:
+		vcf = "12_selectVariants/vcf/{SAMPLE}.vcf.gz",
+		vcfIndex = "12_selectVariants/vcf/{SAMPLE}.vcf.gz.tbi"
+	conda:
+		"snakemake/envs/default.yaml"
+	resources:
+		cpu = 1,
+		ntasks = 1,
+		mem_mb = 200,
+		hours = 0,
+		mins = 10
+	shell:
+		"""
+		gatk \
+			SelectVariants \
+			-R {input.refFa} \
+			-V {input.vcf} \
+			--select-type-to-include SNP \
+			-O {output.vcf}
+		"""
+
+rule mergeSelected:
+	input:
+		vcf = expand("12_selectVariants/vcf/{SAMPLE}.vcf.gz", SAMPLE = SAMPLES),
+		vcfIndex = expand("12_selectVariants/vcf/{SAMPLE}.vcf.gz.tbi", SAMPLE = SAMPLES)
+	output:
+		vcf = "12_selectVariants/mergedVcf/mergedVcf.vcf.gz",
+		vcfIndex = "12_selectVariants/mergedVcf/mergedVcf.vcf.gz.tbi"
+	conda:
+		"snakemake/envs/default.yaml"
+	resources:
+		cpu = 4,
+		ntasks = 2,
+		mem_mb = 2000,
+		hours = 1,
 		mins = 0
 	shell:
 		"""
