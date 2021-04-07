@@ -1,0 +1,664 @@
+---
+title: "eQTL exploration"
+author: "Lachlan Baer"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    fig_width: 8
+    fig_height: 6
+    fig_align: "center"
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  error = FALSE, 
+  fig.align = "center"
+)
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+```
+
+# Setup 
+
+```{r packages}
+library(tidyverse)
+library(magrittr)
+library(parallel)
+library(here)
+library(SeqArray)
+library(AnnotationHub)
+library(purrr)
+library(ggpubr)
+```
+
+```{r options}
+if (interactive()) setwd(here::here())
+theme_set(theme_bw())
+cores <- detectCores() - 2
+```
+
+## Annotation
+
+```{r}
+ah <- AnnotationHub() %>%
+  subset(species == "Danio rerio") %>%
+  subset(rdataclass == "EnsDb")
+ensDb <- ah[["AH64906"]]
+genes <- genes(ensDb)
+mcols(genes) <- mcols(genes)[
+  c("gene_id", "gene_name", "gene_biotype", "entrezid")
+]
+exons <- exonsBy(ensDb, by = "gene")
+```
+
+## topTable
+
+```{r}
+topTable <- read_csv(here("ext_data/FMR1vWildtype.csv"))
+```
+
+# GDS file
+
+```{r}
+vcfPath <- "/hpcfs/users/a1647910/210305_chromosomeProject/2_fmr1/12_selectVariants/mergedVcf/mergedVcf.vcf.gz"
+gdsPath <- "/hpcfs/users/a1647910/210305_chromosomeProject/2_fmr1/12_selectVariants/gds/mergedGds.gds"
+makeGds <-!file.exists(gdsPath)
+if (makeGds) {
+  dir.create(dirname(gdsPath))
+  seqVCF2GDS(vcfPath, gdsPath)
+}
+```
+
+```{r}
+gds <- seqOpen(gdsPath, readonly = FALSE)
+```
+
+# Metadata
+
+```{r}
+samples <- seqGetData(gds, "sample.id")
+## To filter samples by genotype
+wt <- str_detect(samples, "A|D|G|L")
+mut <- str_detect(samples, "S")
+```
+
+# SNPs
+
+```{r}
+drChrs <- paste(c(1:25))
+seqResetFilter(gds)
+snps <- tibble(
+  variant.id = seqGetData(gds, "variant.id"),
+  chromosome = seqGetData(gds, "chromosome"),
+  position = seqGetData(gds, "position"),
+  allele = seqGetData(gds, "allele")
+) %>%
+  dplyr::filter(chromosome %in% drChrs) %>%
+  as_tibble()
+nucCols <- tibble(A = NA, C = NA, G = NA, T = NA)
+```
+
+# Allele depths
+
+## Genes of interest
+
+```{r}
+deGoi <- c("fmr1", "smtnl1", "CU468164.1", "slc7a2", "si:dkey-35h6.1",
+           "plekhf1", "ctsf", "rnf4", "cyp4v7", "si:dkey-31g6.6",
+           "pcdh1g1", "gla", "si:dkey-85k7.7", "rtkn2a", "slco1d1",
+           "znf1179", "cidec", "mgst2", "nocta", "zgc:66433", "atat1")
+deGR <- subset(genes, gene_name %in% deGoi)
+deTib <- tibble(
+  symbol = mcols(deGR)$gene_name,
+  chromosome = as.vector(seqnames(deGR)),
+  start = start(deGR),
+  end = end(deGR),
+  geneId = mcols(deGR)$gene_id
+) %>%
+  dplyr::filter(chromosome %in% drChrs) %>% 
+  dplyr::arrange(chromosome, start)
+```
+
+```{r}
+deChr14 <- dplyr::filter(deTib, chromosome == 14) %>%
+  pull(symbol)
+deOther <- dplyr::filter(deTib, chromosome != 14) %>%
+  pull(symbol)
+```
+
+```{r}
+## Sample 10 non-DE genes in chr 14 with high p-value and expression,
+## that are positioned closely to the DE genes.
+genesByLoc <- topTable %>% 
+  dplyr::select(
+    gene_id = ensembl_gene_id,
+    gene_name = external_gene_name,
+    logFC, AveExpr, P.Value, adj.P.Val
+  ) %>% 
+  right_join(as_tibble(genes)) %>%
+  dplyr::arrange(seqnames, start) %>%
+  dplyr::filter(seqnames %in% drChrs)
+set.seed(17)
+ndeChr14 <- lapply(deChr14, function(x) {
+  row <- which(genesByLoc$gene_name == x)
+  rowLeft <- row - 25
+  rowRight <- row + 25
+  dplyr::slice(genesByLoc, rowLeft:rowRight) %>%
+    dplyr::filter(
+      seqnames == 14, 
+      adj.P.Val > 0.80,
+      AveExpr > 2
+    ) %>%
+    pull(gene_name) %>%
+    sample(1)
+})
+```
+
+## Functions
+
+### getVariants
+
+```{r}
+getVariants <- function(geneName, minCounts = 100) {
+  sym <- geneName
+  geneId <- genes %>%
+    subset(seqnames %in% drChrs) %>%
+    subset(gene_name == sym) %>%
+    .$gene_id
+  eoi <- exons[[geneId]]
+  
+  ## Get variants IDs that lie only in exons
+  seqSetFilter(gds, eoi)
+  vIds <- seqGetData(gds, "variant.id")
+  seqResetFilter(gds)
+  
+  ## If no variants are present we will get an error
+  if (length(vIds) > 0) {
+    
+    ## Get mutant counts 
+    counts_prefilt <- lapply(vIds, function(x){
+      seqResetFilter(gds)
+      seqSetFilter(gds, variant.sel = x, sample.sel = mut)
+      als <- seqGetData(gds, "allele") %>%
+        str_split(",") %>% 
+        unlist()
+      seqGetData(gds, "annotation/format/AD")$data %>%
+        t() %>%
+        rowSums(na.rm = TRUE) %>%
+        set_names(als) %>%
+        bind_rows() %>%
+        mutate(variant.id = x)
+    }) %>%
+      purrr::reduce(full_join) %>%
+      add_column(!!!nucCols[!names(nucCols) %in% names(.)]) %>%
+      left_join(snps, by = "variant.id") %>%
+      dplyr::select(
+        variant.id, chromosome, position, allele, 
+        A, C, G, T, everything()
+      )
+    ## Filter for variants with at least <minCounts> counts
+    passFilt <- counts_prefilt %>%
+      dplyr::select(-variant.id, -chromosome, -position, -allele) %>%
+      rowSums(na.rm = TRUE) %>%
+      is_weakly_greater_than(minCounts)
+    countFilt <- counts_prefilt %>%
+      dplyr::select(-variant.id, -chromosome, -position, -allele) %>%
+      rowSums(na.rm = TRUE) %>%
+      between(1, minCounts - 1)
+    homFilt <- counts_prefilt %>%
+      dplyr::select(-variant.id, -chromosome, -position, -allele) %>%
+      rowSums(na.rm = TRUE) %>%
+      equals(0)
+    passed <- counts_prefilt[passFilt,] %>%
+      dplyr::select(variant.id, chromosome, position, allele, A, C, G, T) %>%
+      mutate(genotype = "Mutant")
+    filtered <- counts_prefilt[countFilt,] %>%
+      dplyr::select(variant.id, chromosome, position, allele) %>%
+      mutate(filt = 1, genotype = "Mutant")
+    if (sum(homFilt) > 0) {
+      homRef <- counts_prefilt[homFilt,] %>%
+        dplyr::select(variant.id, chromosome, position, allele) %>%
+        mutate(
+          Ref = str_split(allele, ",", simplify = TRUE)[,1],
+          A = ifelse(Ref == "A", 1, NA),
+          C = ifelse(Ref == "C", 1, NA),
+          G = ifelse(Ref == "G", 1, NA),
+          T = ifelse(Ref == "T", 1, NA),
+          genotype = "Mutant"
+        ) %>%
+        dplyr::select(-Ref)
+    } else{
+      homRef <- counts_prefilt[homFilt,] %>%
+        dplyr::select(variant.id, chromosome, position, allele) %>%
+        mutate(genotype = "Mutant")
+    }
+    counts_mut <- full_join(full_join(passed, filtered), homRef)
+    
+    ## Get WT counts 
+    counts_prefilt <- lapply(vIds, function(x){
+      seqResetFilter(gds)
+      seqSetFilter(gds, variant.sel = x, sample.sel = wt)
+      als <- seqGetData(gds, "allele") %>%
+        str_split(",") %>% 
+        unlist()
+      seqGetData(gds, "annotation/format/AD")$data %>%
+        t() %>%
+        rowSums(na.rm = TRUE) %>%
+        set_names(als) %>%
+        bind_rows() %>%
+        mutate(variant.id = x)
+    }) %>%
+      purrr::reduce(full_join) %>%
+      add_column(!!!nucCols[!names(nucCols) %in% names(.)]) %>%
+      left_join(snps, by = "variant.id") %>%
+      dplyr::select(
+        variant.id, chromosome, position, allele, 
+        A, C, G, T, everything()
+      )
+    ## Filter for variants with at least <minCounts> counts
+    passFilt <- counts_prefilt %>%
+      dplyr::select(-variant.id, -chromosome, -position, -allele) %>%
+      rowSums(na.rm = TRUE) %>%
+      is_weakly_greater_than(minCounts)
+    countFilt <- counts_prefilt %>%
+      dplyr::select(-variant.id, -chromosome, -position, -allele) %>%
+      rowSums(na.rm = TRUE) %>%
+      between(1, minCounts - 1)
+    homFilt <- counts_prefilt %>%
+      dplyr::select(-variant.id, -chromosome, -position, -allele) %>%
+      rowSums(na.rm = TRUE) %>%
+      equals(0)
+    passed <- counts_prefilt[passFilt,] %>%
+      dplyr::select(variant.id, chromosome, position, allele, A, C, G, T) %>%
+      mutate(genotype = "Wildtype")
+    filtered <- counts_prefilt[countFilt,] %>%
+      dplyr::select(variant.id, chromosome, position, allele) %>%
+      mutate(filt = 1, genotype = "Wildtype")
+    if (sum(homFilt) > 0) {
+      homRef <- counts_prefilt[homFilt,] %>%
+        dplyr::select(variant.id, chromosome, position, allele) %>%
+        mutate(
+          Ref = str_split(allele, ",", simplify = TRUE)[,1],
+          A = ifelse(Ref == "A", 1, NA),
+          C = ifelse(Ref == "C", 1, NA),
+          G = ifelse(Ref == "G", 1, NA),
+          T = ifelse(Ref == "T", 1, NA),
+          genotype = "Wildtype"
+        ) %>%
+        dplyr::select(-Ref)
+    } else{
+      homRef <- counts_prefilt[homFilt,] %>%
+        dplyr::select(variant.id, chromosome, position, allele) %>%
+        mutate(genotype = "Wildtype")
+    }
+    counts_wt <- full_join(full_join(passed, filtered), homRef)
+    
+    full_join(counts_mut, counts_wt)  %>%
+      pivot_longer(
+        cols = !c("variant.id", "chromosome", "position", "allele", "genotype"),
+        names_to = "base"
+      ) %>%
+      na.omit() %>%
+      mutate(gene = sym)
+    
+    ## If no variants then return tibble representative of no detection  
+  } else {
+    tibble(
+      variant.id = c(NA, NA),
+      chromosome = c(NA, NA),
+      position = c(NA, NA),
+      allele = c(NA, NA),
+      genotype = c("Mutant", "Wildtype"),
+      base = c("undetect", "undetect"),
+      value = c(1, 1),
+      gene = c(sym, sym),
+    )
+  }
+}
+```
+
+```{r}
+# getVariants <- function(geneName, minCounts = 100) {
+#   sym <- geneName
+#   geneId <- genes %>%
+#     subset(seqnames %in% drChrs) %>%
+#     subset(gene_name == sym) %>%
+#     .$gene_id
+#   eoi <- exons[[geneId]]
+#   
+#   ## Get variants IDs that lie only in exons
+#   seqSetFilter(gds, eoi)
+#   vIds <- seqGetData(gds, "variant.id")
+#   seqResetFilter(gds)
+#   
+#   ## If no variants are present we will get an error
+#   if (length(vIds) > 0) {
+#     
+#     ## Get mutant counts 
+#     counts_prefilt <- lapply(vIds, function(x){
+#       seqResetFilter(gds)
+#       seqSetFilter(gds, variant.sel = x, sample.sel = mut)
+#       als <- seqGetData(gds, "allele") %>%
+#         str_split(",") %>% 
+#         unlist()
+#       seqGetData(gds, "annotation/format/AD")$data %>%
+#         t() %>%
+#         rowSums(na.rm = TRUE) %>%
+#         set_names(als) %>%
+#         bind_rows() %>%
+#         mutate(variant.id = x)
+#     }) %>%
+#       purrr::reduce(full_join) %>%
+#       add_column(!!!nucCols[!names(nucCols) %in% names(.)]) %>%
+#       left_join(snps, by = "variant.id") %>%
+#       dplyr::select(
+#         variant.id, chromosome, position, allele, 
+#         A, C, G, T, everything()
+#       )
+#     ## Filter for variants with at least <minCounts> counts
+#     passFilt <- counts_prefilt %>%
+#       dplyr::select(-variant.id, -chromosome, -position, -allele) %>%
+#       rowSums(na.rm = TRUE) %>%
+#       is_weakly_greater_than(minCounts)
+#     countFilt <- counts_prefilt %>%
+#       dplyr::select(-variant.id, -chromosome, -position, -allele) %>%
+#       rowSums(na.rm = TRUE) %>%
+#       between(1, minCounts - 1)
+#     undetectFilt <- counts_prefilt %>%
+#       dplyr::select(-variant.id, -chromosome, -position, -allele) %>%
+#       rowSums(na.rm = TRUE) %>%
+#       equals(0)
+#     passed <- counts_prefilt[passFilt,] %>%
+#       dplyr::select(variant.id, chromosome, position, allele, A, C, G, T) %>%
+#       mutate(genotype = "Mutant")
+#     filtered <- counts_prefilt[countFilt,] %>%
+#       dplyr::select(variant.id, chromosome, position, allele) %>%
+#       mutate(filt = 1, genotype = "Mutant")
+#     undetected <- counts_prefilt[undetectFilt,] %>%
+#       dplyr::select(variant.id, chromosome, position, allele) %>%
+#       mutate(undetect = 1, genotype = "Mutant")
+#     counts_mut <- full_join(full_join(passed, filtered), undetected)
+#     
+#     ## Get WT counts 
+#     counts_prefilt <- lapply(vIds, function(x){
+#       seqResetFilter(gds)
+#       seqSetFilter(gds, variant.sel = x, sample.sel = wt)
+#       als <- seqGetData(gds, "allele") %>%
+#         str_split(",") %>% 
+#         unlist()
+#       seqGetData(gds, "annotation/format/AD")$data %>%
+#         t() %>%
+#         rowSums(na.rm = TRUE) %>%
+#         set_names(als) %>%
+#         bind_rows() %>%
+#         mutate(variant.id = x)
+#     }) %>%
+#       purrr::reduce(full_join) %>%
+#       add_column(!!!nucCols[!names(nucCols) %in% names(.)]) %>%
+#       left_join(snps, by = "variant.id") %>%
+#       dplyr::select(
+#         variant.id, chromosome, position, allele, 
+#         A, C, G, T, everything()
+#       )
+#     ## Filter for variants with at least <minCounts> counts
+#     passFilt <- counts_prefilt %>%
+#       dplyr::select(-variant.id, -chromosome, -position, -allele) %>%
+#       rowSums(na.rm = TRUE) %>%
+#       is_weakly_greater_than(minCounts)
+#     countFilt <- counts_prefilt %>%
+#       dplyr::select(-variant.id, -chromosome, -position, -allele) %>%
+#       rowSums(na.rm = TRUE) %>%
+#       between(1, minCounts - 1)
+#     undetectFilt <- counts_prefilt %>%
+#       dplyr::select(-variant.id, -chromosome, -position, -allele) %>%
+#       rowSums(na.rm = TRUE) %>%
+#       equals(0)
+#     passed <- counts_prefilt[passFilt,] %>%
+#       dplyr::select(variant.id, chromosome, position, allele, A, C, G, T) %>%
+#       mutate(genotype = "Wildtype")
+#     filtered <- counts_prefilt[countFilt,] %>%
+#       dplyr::select(variant.id, chromosome, position, allele) %>%
+#       mutate(filt = 1, genotype = "Wildtype")
+#     undetected <- counts_prefilt[undetectFilt,] %>%
+#       dplyr::select(variant.id, chromosome, position, allele) %>%
+#       mutate(undetect = 1, genotype = "Wildtype")
+#     counts_wt <- full_join(full_join(passed, filtered), undetected)
+#     
+#     full_join(counts_mut, counts_wt)  %>%
+#       pivot_longer(
+#         cols = !c("variant.id", "chromosome", "position", "allele", "genotype"),
+#         names_to = "base"
+#       ) %>%
+#       na.omit() %>%
+#       mutate(gene = sym)
+#     
+#     ## If no variants then return tibble representative of no detection  
+#   } else {
+#     tibble(
+#       variant.id = c(NA, NA),
+#       chromosome = c(NA, NA),
+#       position = c(NA, NA),
+#       allele = c(NA, NA),
+#       genotype = c("Mutant", "Wildtype"),
+#       base = c("undetect", "undetect"),
+#       value = c(1, 1),
+#       gene = c(sym, sym),
+#     )
+#   }
+# }
+```
+
+### plot1Col
+
+```{r}
+plot1Col <- function(variants, genes, title) {
+  variants %>%
+    purrr::reduce(rbind) %>%
+    mutate(
+      position = factor(position),
+      gene = factor(gene, levels = genes),
+      base = factor(base, levels = c("A", "C", "G", "T", "filt", "undetect")),
+      genotype = factor(genotype, levels = c("Mutant", "Wildtype")),
+      geneGeno = factor(
+        x = paste(genotype, "-", gene),
+        levels = paste(
+          rep(c("Mutant", "Wildtype"), length(genes)),
+          "-",
+          rep(genes, each = 2)
+        )
+      )
+    ) %>%
+    ggplot(aes(
+      x = position,
+      y = value,
+      fill = base,
+      # group = dplyr::arrange(., desc(genotype), position, desc(value)) %>%
+      #   pull(base)
+    )) +
+    geom_bar(position = "fill", stat = "identity") +
+    facet_wrap(
+      ~ geneGeno,
+      scales = "free",
+      drop = FALSE,
+      ncol = 1,
+      strip.position = "left"
+    ) +
+    scale_fill_manual(
+      values = c("darkblue", "orange", "darkgreen", "darkred", "grey", "grey40"),
+      labels = c("A", "C", "G", "T", "Counts < 20", "Undetected")
+    ) +
+    labs(
+      title = title,
+      fill = "Allele"
+    ) +
+    theme(
+      axis.text.x = element_blank(),
+      axis.text.y = element_blank(),
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      axis.ticks = element_blank(),
+      plot.title = element_text(hjust = 0.5),
+      strip.text.y.left = element_text(face = "bold", angle = 0, hjust = 1),
+      strip.placement = "inside",
+      strip.background = element_blank()
+    )
+}
+```
+
+### plot2Col
+
+```{r}
+plot2Col <- function(variants, genes, title) {
+  variants %>%
+    purrr::reduce(rbind) %>%
+    mutate(
+      position = factor(position),
+      gene = factor(gene, levels = genes),
+      base = factor(base, levels = c("A", "C", "G", "T", "filt", "undetect")),
+      genotype = factor(genotype, levels = c("Mutant", "Wildtype")),
+      geneGeno = factor(
+        x = paste(genotype, "-", gene),
+        levels = paste(
+          rep(c("Mutant", "Wildtype"), length(genes)),
+          "-",
+          rep(genes, each = 2)
+        )
+      )
+    ) %>%
+    ggplot(aes(
+      x = position,
+      y = value,
+      fill = base,
+      group = dplyr::arrange(., desc(genotype), position, desc(value)) %>%
+        pull(base)
+    )) +
+    geom_bar(position = "fill", stat = "identity") +
+    facet_wrap(
+      ~ geneGeno,
+      scales = "free",
+      drop = FALSE,
+      ncol = 2,
+      strip.position = "top"
+    ) +
+    scale_fill_manual(
+      values = c("darkblue", "orange", "darkgreen", "darkred", "grey", "grey40"),
+      labels = c("A", "C", "G", "T", "Counts < 20", "Undetected")
+    ) +
+    labs(
+      title = title,
+      fill = "Allele"
+    ) +
+    theme(
+      axis.text.x = element_blank(),
+      axis.text.y = element_blank(),
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      axis.ticks = element_blank(),
+      plot.title = element_text(hjust = 0.5),
+      strip.text.y.left = element_text(face = "bold", angle = 0, hjust = 1),
+      strip.placement = "inside",
+      strip.background = element_blank(),
+      legend.position = "bottom"
+    )
+}
+```
+
+## Plots (1 column)
+
+### DE chr14
+
+```{r, results="hide"}
+deChr14_variants <- lapply(deChr14, getVariants, 20)
+```
+
+```{r, fig.height=9}
+deChr14_plot <- plot1Col(
+  deChr14_variants,
+  deChr14,
+  "DE genes on Chromosome 14"
+)
+deChr14_plot
+```
+
+### DE other chrs
+
+```{r, results="hide"}
+deOther_variants <- lapply(deOther, getVariants, 20)
+```
+
+```{r, fig.height=9}
+deOther_plot <- plot1Col(
+  deOther_variants,
+  deOther,
+  "DE genes on other Chromosomes"
+)
+deOther_plot
+# ggsave("~/phd/publications/fmr1/DEother.png", device = "png", units = "mm", width = 210, height = 150)
+```
+
+### Not DE chr 14
+
+```{r, results="hide"}
+ndeChr14_variants <- lapply(ndeChr14, getVariants, 20)
+```
+
+```{r, fig.height=9}
+ndeChr14_plot <-  plot1Col(
+  ndeChr14_variants,
+  ndeChr14,
+  "Genes on Chromosome 14 not DE"
+)
+ndeChr14_plot
+```
+
+### Summary
+
+```{r}
+ggarrange(
+  deChr14_plot,
+  deOther_plot,
+  ncol = 2,
+  common.legend = TRUE,
+  legend = "bottom"
+)
+# ggsave("~/phd/publications/fmr1/DEvsNDE.png", device = "png", units = "mm", width = 297, height = 210)
+```
+
+```{r}
+ggarrange(
+  deChr14_plot,
+  ndeChr14_plot,
+  ncol = 2,
+  common.legend = TRUE,
+  legend = "bottom", 
+  labels = "AUTO"
+)
+```
+
+## Plots (2 columns)
+
+### DE chr14
+
+```{r, fig.height=12}
+plot2Col(deChr14_variants, deChr14, "DE genes on chromosome 14")
+```
+
+### DE other chrs
+
+```{r, fig.height=9}
+plot2Col(deOther_variants, deOther, "DE genes on other chromosomes")
+```
+
+### Not DE chr 14
+
+```{r, fig.height=9}
+plot2Col(ndeChr14_variants, ndeChr14, "DE genes on other chromosomes")
+```
