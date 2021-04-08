@@ -14,28 +14,25 @@
 ##   - It is better to therefore generate a set of known variants from our data than to use pre-defined ones in a database (dbSNP , Ensembl)
 ##   - The reasoning and process for this is located at https://gatk.broadinstitute.org/hc/en-us/articles/360035890531?id=44 (Section 3)
 
+## Dictionaries for expanding
 SAMPLES = ["A", "D", "G", "L", "S2", "S4", "S5", "S8"]
-
-FQC_EXT = ["zip", "html"]
 PAIR_ID = ["1", "2"]
+REF_EXT = ["dict", "fa.fai"]
+FQC_EXT = ["zip", "html"]
+VCF_EXT = ["vcf.gz", "vcf.gz.tbi"]
 
-REFS = "/hpcfs/users/a1647910/refs/ensembl-release-94/danio_rerio/"
+## Set refs directory and read length
+REFDIR = "/hpcfs/users/a1647910/refs/ensembl-release-94/danio_rerio/"
 READ_LEN = 150
 
 rule all:
 	input:
-		REFS + "Danio_rerio.GRCz11.dna.primary_assembly.dict",
-		REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa.fai",
+		expand(REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.{EXT}", EXT = REF_EXT),
 		expand("00_rawData/FastQC/{SAMPLE}_{PAIR}_fastqc.{EXT}", SAMPLE = SAMPLES, PAIR = PAIR_ID, EXT = FQC_EXT),
 		expand("01_trimmedData/FastQC/{SAMPLE}_{PAIR}_fastqc.{EXT}", SAMPLE = SAMPLES, PAIR = PAIR_ID, EXT = FQC_EXT),
 		expand("02_alignedData/FastQC/{SAMPLE}_Aligned.sortedByCoord.out_fastqc.{EXT}", SAMPLE = SAMPLES, EXT = FQC_EXT),
 		expand("03_markDuplicates/FastQC/{SAMPLE}_fastqc.{EXT}", SAMPLE = SAMPLES, EXT = FQC_EXT),
-		"10_callVariants/mergedVcf/mergedVcf.vcf.gz",
-		"10_callVariants/mergedVcf/mergedVcf.vcf.gz.tbi",
-		"11_filterVariants/mergedVcf/mergedVcf.vcf.gz",
-		"11_filterVariants/mergedVcf/mergedVcf.vcf.gz.tbi",
-		"12_selectVariants/mergedVcf/mergedVcf.vcf.gz",
-		"12_selectVariants/mergedVcf/mergedVcf.vcf.gz.tbi"
+		expand("12_selectVariants/mergedVcf/mergedVcf.{EXT}", EXT = VCF_EXT)
 
 rule fastqc_raw:
 	input:
@@ -61,8 +58,8 @@ rule trim:
 		R1 = "00_rawData/fastq/{SAMPLE}_1.fq.gz",
 		R2 = "00_rawData/fastq/{SAMPLE}_2.fq.gz"
 	output:
-		R1 = "01_trimmedData/fastq/{SAMPLE}_1.fq.gz",
-		R2 = "01_trimmedData/fastq/{SAMPLE}_2.fq.gz",
+		R1 = temp("01_trimmedData/fastq/{SAMPLE}_1.fq.gz"),
+		R2 = temp("01_trimmedData/fastq/{SAMPLE}_2.fq.gz"),
 		setting = "01_trimmedData/fastq/{SAMPLE}.settings",
 		discard = "01_trimmedData/fastq/{SAMPLE}.discarded.gz",
 		single = "01_trimmedData/fastq/{SAMPLE}.singleton.truncated.gz" ## Only for paired end
@@ -112,9 +109,9 @@ rule fastqc_trim:
 
 rule unzip_refFa:
 	input:
-		REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa.gz"
+		REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa.gz"
 	output:
-		temp(REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa")
+		temp(REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa")
 	conda:
 		"snakemake/envs/default.yaml"
 	resources:
@@ -128,10 +125,10 @@ rule unzip_refFa:
 
 rule star_index:
 	input:
-		refFa = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa",
-		gtf = REFS + "Danio_rerio.GRCz11.94.chr.gtf.gz"
+		refFa = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa",
+		gtf = REFDIR + "Danio_rerio.GRCz11.94.chr.gtf.gz"
 	output:
-		temp(directory(REFS + "star/"))
+		temp(directory(REFDIR + "star/"))
 	params:
 		overhang = READ_LEN-1
 	conda:
@@ -161,9 +158,9 @@ rule align:
 	input:
 		R1 = "01_trimmedData/fastq/{SAMPLE}_1.fq.gz",
 		R2 = "01_trimmedData/fastq/{SAMPLE}_2.fq.gz",
-		starIndex = REFS + "star/"
+		starIndex = REFDIR + "star/"
 	output:
-		"02_alignedData/bam/{SAMPLE}_Aligned.sortedByCoord.out.bam"
+		temp("02_alignedData/bam/{SAMPLE}_Aligned.sortedByCoord.out.bam")
 	params:
 		overhang = READ_LEN-1,
 		bname = "02_alignedData/bam/{SAMPLE}_"
@@ -216,8 +213,8 @@ rule mark_duplicates:
 	input:
 		"02_alignedData/bam/{SAMPLE}_Aligned.sortedByCoord.out.bam"
 	output:
-		bam = "03_markDuplicates/bam/{SAMPLE}.bam",
-		bamIndex = "03_markDuplicates/bam/{SAMPLE}.bai",
+		bam = temp("03_markDuplicates/bam/{SAMPLE}.bam"),
+		bamIndex = temp("03_markDuplicates/bam/{SAMPLE}.bai"),
 		metrics = "03_markDuplicates/log/{SAMPLE}.metrics"
 	conda:
 		"snakemake/envs/default.yaml"
@@ -261,9 +258,9 @@ rule fastqc_duplicates:
 ## https://gatk.broadinstitute.org/hc/en-us/articles/360035531652-FASTA-Reference-genome-format
 rule ref_dict:
 	input:
-		REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa"
+		REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa"
 	output:
-		REFS + "Danio_rerio.GRCz11.dna.primary_assembly.dict"
+		temp(REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.dict")
 	conda:
 		"snakemake/envs/default.yaml"
 	resources:
@@ -277,9 +274,9 @@ rule ref_dict:
 
 rule ref_index:
 	input:
-		REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa"
+		REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa"
 	output:
-		REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa.fai"
+		temp(REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa.fai")
 	conda:
 		"snakemake/envs/default.yaml"
 	resources:
@@ -295,12 +292,12 @@ rule splitNCigar:
 	input:
 		bam = "03_markDuplicates/bam/{SAMPLE}.bam",
 		bamIndex = "03_markDuplicates/bam/{SAMPLE}.bai",
-		refFa = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa",
-		refIndex = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa.fai",
-		refDict = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.dict"
+		refFa = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa",
+		refIndex = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa.fai",
+		refDict = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.dict"
 	output:
-		bam = "04_splitNCigar/bam/{SAMPLE}.bam",
-		bamIndex = "04_splitNCigar/bam/{SAMPLE}.bai"
+		bam = temp("04_splitNCigar/bam/{SAMPLE}.bam"),
+		bamIndex = temp("04_splitNCigar/bam/{SAMPLE}.bai")
 	conda:
 		"snakemake/envs/default.yaml"
 	resources:
@@ -325,8 +322,8 @@ rule addRG:
 		bam = "04_splitNCigar/bam/{SAMPLE}.bam",
 		bamIndex = "04_splitNCigar/bam/{SAMPLE}.bai"
 	output:
-		bam = "05_addRG/bam/{SAMPLE}.bam",
-		bamIndex = "05_addRG/bam/{SAMPLE}.bai"
+		bam = temp("05_addRG/bam/{SAMPLE}.bam"),
+		bamIndex = temp("05_addRG/bam/{SAMPLE}.bai")
 	conda:
 		"snakemake/envs/default.yaml"
 	resources:
@@ -355,12 +352,12 @@ rule callVariants_noRecal:
 	input:
 		bam = "05_addRG/bam/{SAMPLE}.bam",
 		bamIndex = "05_addRG/bam/{SAMPLE}.bai",
-		refFa = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa",
-		refIndex = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa.fai",
-		refDict = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.dict"
+		refFa = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa",
+		refIndex = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa.fai",
+		refDict = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.dict"
 	output:
-		vcf = "06_callVariants_noRecal/vcf/{SAMPLE}.vcf.gz",
-		vcfIndex = "06_callVariants_noRecal/vcf/{SAMPLE}.vcf.gz.tbi"
+		vcf = temp("06_callVariants_noRecal/vcf/{SAMPLE}.vcf.gz"),
+		vcfIndex = temp("06_callVariants_noRecal/vcf/{SAMPLE}.vcf.gz.tbi")
 	conda:
 		"snakemake/envs/default.yaml"
 	resources:
@@ -384,12 +381,12 @@ rule knownVariants:
 	input:
 		vcf = "06_callVariants_noRecal/vcf/{SAMPLE}.vcf.gz",
 		vcfIndex = "06_callVariants_noRecal/vcf/{SAMPLE}.vcf.gz.tbi",
-		refFa = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa",
-		refIndex = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa.fai",
-		refDict = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.dict"
+		refFa = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa",
+		refIndex = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa.fai",
+		refDict = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.dict"
 	output:
-		vcf = "07_knownVariants/vcf/{SAMPLE}.vcf.gz",
-		vcfIndex = "07_knownVariants/vcf/{SAMPLE}.vcf.gz.tbi"
+		vcf = temp("07_knownVariants/vcf/{SAMPLE}.vcf.gz"),
+		vcfIndex = temp("07_knownVariants/vcf/{SAMPLE}.vcf.gz.tbi")
 	conda:
 		"snakemake/envs/default.yaml"
 	resources:
@@ -418,13 +415,13 @@ rule baseRecal:
 	input:
 		bam = "05_addRG/bam/{SAMPLE}.bam",
 		bamIndex = "05_addRG/bam/{SAMPLE}.bai",
-		refFa = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa",
-		refIndex = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa.fai",
-		refDict = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.dict",
+		refFa = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa",
+		refIndex = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa.fai",
+		refDict = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.dict",
 		dbsnp = "07_knownVariants/vcf/{SAMPLE}.vcf.gz",
 		dbsnpIndex = "07_knownVariants/vcf/{SAMPLE}.vcf.gz.tbi"
 	output:
-		"08_baseRecal/{SAMPLE}_recal"
+		temp("08_baseRecal/{SAMPLE}_recal")
 	conda:
 		"snakemake/envs/default.yaml"
 	resources:
@@ -450,13 +447,13 @@ rule applyRecal:
 	input:
 		bam = "05_addRG/bam/{SAMPLE}.bam",
 		bamIndex = "05_addRG/bam/{SAMPLE}.bai",
-		refFa = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa",
-		refIndex = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa.fai",
-		refDict = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.dict",
+		refFa = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa",
+		refIndex = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa.fai",
+		refDict = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.dict",
 		recal = "08_baseRecal/{SAMPLE}_recal"
 	output:
-		bam = "09_applyRecal/bam/{SAMPLE}.bam",
-		bamIndex = "09_applyRecal/bam/{SAMPLE}.bai"
+		bam = temp("09_applyRecal/bam/{SAMPLE}.bam"),
+		bamIndex = temp("09_applyRecal/bam/{SAMPLE}.bai")
 	conda:
 		"snakemake/envs/default.yaml"
 	resources:
@@ -484,12 +481,12 @@ rule callVariants:
 	input:
 		bam = "09_applyRecal/bam/{SAMPLE}.bam",
 		bamIndex = "09_applyRecal/bam/{SAMPLE}.bai",
-		refFa = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa",
-		refIndex = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa.fai",
-		refDict = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.dict"
+		refFa = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa",
+		refIndex = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa.fai",
+		refDict = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.dict"
 	output:
-		vcf = "10_callVariants/vcf/{SAMPLE}.vcf.gz",
-		vcfIndex = "10_callVariants/vcf/{SAMPLE}.vcf.gz.tbi"
+		vcf = temp("10_callVariants/vcf/{SAMPLE}.vcf.gz"),
+		vcfIndex = temp("10_callVariants/vcf/{SAMPLE}.vcf.gz.tbi")
 	conda:
 		"snakemake/envs/default.yaml"
 	resources:
@@ -509,37 +506,16 @@ rule callVariants:
 		--standard-min-confidence-threshold-for-calling 20
 		"""
 
-rule mergeCalled:
-	input:
-		vcf = expand("10_callVariants/vcf/{SAMPLE}.vcf.gz", SAMPLE = SAMPLES),
-		vcfIndex = expand("10_callVariants/vcf/{SAMPLE}.vcf.gz.tbi", SAMPLE = SAMPLES)
-	output:
-		vcf = "10_callVariants/mergedVcf/mergedVcf.vcf.gz",
-		vcfIndex = "10_callVariants/mergedVcf/mergedVcf.vcf.gz.tbi"
-	conda:
-		"snakemake/envs/default.yaml"
-	resources:
-		cpu = 2,
-		ntasks = 1,
-		mem_mb = 8000,
-		hours = 6,
-		mins = 0
-	shell:
-		"""
-		bcftools merge --threads {resources.cpu} -o {output.vcf} -O z {input.vcf}
-		bcftools index --threads {resources.cpu} -t {output.vcf}
-		"""
-
 rule filterVariants:
 	input:
 		vcf = "10_callVariants/vcf/{SAMPLE}.vcf.gz",
 		vcfIndex = "10_callVariants/vcf/{SAMPLE}.vcf.gz.tbi",
-		refFa = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa",
-		refIndex = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa.fai",
-		refDict = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.dict"
+		refFa = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa",
+		refIndex = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa.fai",
+		refDict = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.dict"
 	output:
-		vcf = "11_filterVariants/vcf/{SAMPLE}.vcf.gz",
-		vcfIndex = "11_filterVariants/vcf/{SAMPLE}.vcf.gz.tbi"
+		vcf = temp("11_filterVariants/vcf/{SAMPLE}.vcf.gz"),
+		vcfIndex = temp("11_filterVariants/vcf/{SAMPLE}.vcf.gz.tbi")
 	conda:
 		"snakemake/envs/default.yaml"
 	resources:
@@ -563,34 +539,13 @@ rule filterVariants:
 			-O {output.vcf}
 		"""
 
-rule mergeFiltered:
-	input:
-		vcf = expand("11_filterVariants/vcf/{SAMPLE}.vcf.gz", SAMPLE = SAMPLES),
-		vcfIndex = expand("11_filterVariants/vcf/{SAMPLE}.vcf.gz.tbi", SAMPLE = SAMPLES)
-	output:
-		vcf = "11_filterVariants/mergedVcf/mergedVcf.vcf.gz",
-		vcfIndex = "11_filterVariants/mergedVcf/mergedVcf.vcf.gz.tbi"
-	conda:
-		"snakemake/envs/default.yaml"
-	resources:
-		cpu = 2,
-		ntasks = 1,
-		mem_mb = 8000,
-		hours = 6,
-		mins = 0
-	shell:
-		"""
-		bcftools merge --threads {resources.cpu} -o {output.vcf} -O z {input.vcf}
-		bcftools index --threads {resources.cpu} -t {output.vcf}
-		"""
-
 rule selectVariants:
 	input:
 		vcf = "11_filterVariants/vcf/{SAMPLE}.vcf.gz",
-		refFa = REFS + "Danio_rerio.GRCz11.dna.primary_assembly.fa"
+		refFa = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa"
 	output:
-		vcf = "12_selectVariants/vcf/{SAMPLE}.vcf.gz",
-		vcfIndex = "12_selectVariants/vcf/{SAMPLE}.vcf.gz.tbi"
+		vcf = temp("12_selectVariants/vcf/{SAMPLE}.vcf.gz"),
+		vcfIndex = temp("12_selectVariants/vcf/{SAMPLE}.vcf.gz.tbi")
 	conda:
 		"snakemake/envs/default.yaml"
 	resources:
