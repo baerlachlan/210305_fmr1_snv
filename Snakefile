@@ -542,6 +542,7 @@ rule filterVariants:
 rule selectVariants:
 	input:
 		vcf = "11_filterVariants/vcf/{SAMPLE}.vcf.gz",
+		vcfIndex = "11_filterVariants/vcf/{SAMPLE}.vcf.gz.tbi",
 		refFa = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa"
 	output:
 		vcf = temp("12_selectVariants/vcf/{SAMPLE}.vcf.gz"),
