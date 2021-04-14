@@ -14,7 +14,7 @@
 ##   - It is better to therefore generate a set of known variants from our data than to use pre-defined ones in a database (dbSNP , Ensembl)
 ##   - The reasoning and process for this is located at https://gatk.broadinstitute.org/hc/en-us/articles/360035890531?id=44 (Section 3)
 
-## Dictionaries for expanding
+## Lists for expanding
 SAMPLES = ["A", "D", "G", "L", "S2", "S4", "S5", "S8"]
 PAIR_ID = ["1", "2"]
 REF_EXT = ["dict", "fa.fai"]
@@ -393,8 +393,8 @@ rule knownVariants:
 		cpu = 1,
 		ntasks = 2,
 		mem_mb = 1000,
-		hours = 0,
-		mins = 1
+		hours = 2,
+		mins = 0
 	shell:
 		"""
 		gatk \
