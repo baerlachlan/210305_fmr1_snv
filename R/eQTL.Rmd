@@ -68,8 +68,8 @@ topTable <- read_csv(here("ext_data/FMR1vWildtype.csv"))
 # GDS file
 
 ```{r}
-vcfPath <- "/hpcfs/users/a1647910/210305_chromosomeProject/2_fmr1/12_selectVariants/mergedVcf/mergedVcf.vcf.gz"
-gdsPath <- "/hpcfs/users/a1647910/210305_chromosomeProject/2_fmr1/12_selectVariants/gds/mergedGds.gds"
+vcfPath <- "/hpcfs/users/a1647910/210305_fmr1_snv/12_selectVariants/mergedVcf/mergedVcf.vcf.gz"
+gdsPath <- "/hpcfs/users/a1647910/210305_fmr1_snv/12_selectVariants/gds/mergedGds.gds"
 makeGds <-!file.exists(gdsPath)
 if (makeGds) {
   dir.create(dirname(gdsPath))
@@ -641,24 +641,4 @@ ggarrange(
   legend = "bottom", 
   labels = "AUTO"
 )
-```
-
-## Plots (2 columns)
-
-### DE chr14
-
-```{r, fig.height=12}
-plot2Col(deChr14_variants, deChr14, "DE genes on chromosome 14")
-```
-
-### DE other chrs
-
-```{r, fig.height=9}
-plot2Col(deOther_variants, deOther, "DE genes on other chromosomes")
-```
-
-### Not DE chr 14
-
-```{r, fig.height=9}
-plot2Col(ndeChr14_variants, ndeChr14, "DE genes on other chromosomes")
 ```
