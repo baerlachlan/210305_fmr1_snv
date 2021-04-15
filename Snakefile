@@ -32,7 +32,8 @@ rule all:
 		expand("01_trimmedData/FastQC/{SAMPLE}_{PAIR}_fastqc.{EXT}", SAMPLE = SAMPLES, PAIR = PAIR_ID, EXT = FQC_EXT),
 		expand("02_alignedData/FastQC/{SAMPLE}_Aligned.sortedByCoord.out_fastqc.{EXT}", SAMPLE = SAMPLES, EXT = FQC_EXT),
 		expand("03_markDuplicates/FastQC/{SAMPLE}_fastqc.{EXT}", SAMPLE = SAMPLES, EXT = FQC_EXT),
-		expand("12_selectVariants/mergedVcf/mergedVcf.{EXT}", EXT = VCF_EXT)
+		expand("12_selectVariants/mergedVcf/mergedVcf.{EXT}", EXT = VCF_EXT),
+		expand("13_countAlleles/counts/{SAMPLE}.alleleCounts.tsv", SAMPLE = SAMPLES)
 
 rule fastqc_raw:
 	input:
@@ -584,4 +585,30 @@ rule mergeSelected:
 		"""
 		bcftools merge --threads {resources.cpu} -o {output.vcf} -O z {input.vcf}
 		bcftools index --threads {resources.cpu} -t {output.vcf}
+		"""
+
+rule countAlleles:
+	input:
+		bam = "09_applyRecal/bam/{SAMPLE}.bam",
+		bamIndex = "09_applyRecal/bam/{SAMPLE}.bai",
+		refFa = REFDIR + "Danio_rerio.GRCz11.dna.primary_assembly.fa",
+		intervals = "13_countAlleles/intervals/snvs.intervals"
+	output:
+		counts = "13_countAlleles/counts/{SAMPLE}.alleleCounts.tsv"
+	conda:
+		"snakemake/envs/default.yaml"
+	resources:
+		cpu = 1,
+		ntasks = 1,
+		mem_mb = 4000,
+		hours = 1,
+		mins = 0
+	shell:
+		"""
+		gatk \
+			CollectAllelicCounts \
+			-I {input.bam} \
+			-R {input.refFa} \
+			-L {input.intervals} \
+			-O {output.counts}
 		"""

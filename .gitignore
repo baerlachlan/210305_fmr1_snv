@@ -28,3 +28,6 @@ bash/\.*
 /snakemake/logs/*
 *vcf.gz*
 *.gds
+*.alleleCounts.tsv
+*.intervals
+08_baseRecal/*
