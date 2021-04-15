@@ -1,0 +1,119 @@
+---
+title: "Make GATK-style `.intervals`"
+author: "Lachlan Baer"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    fig_width: 8
+    fig_height: 6
+    fig_align: "center"
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  error = FALSE, 
+  fig.align = "center"
+)
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+```
+
+# Information
+
+A difficulty encountered when trying to determine allelic counts from the output of the GATK workflow for RNAseq short variant discovery arises due to positions not being reported when homozygous for the reference nucleotide.
+This means that for when there is a variant present in some samples, reference and alternate allele counts are available, but other samples contain no information.
+As we are interested in the allelic diversity between **all** samples, an additional step is needed.
+The strategy here is to gather the genomic locations where there was sufficient evidence to suggest single nucleotide variation (SNV) in at least one sample, as determined by the GATK workflow.
+The following code converts these locations into a GATK-style interval list which can be used with GATK tool `CollectAllelicCounts` to determine alleles in all samples.
+A number of interval list formats are supported by GATK as described [here](https://gatk.broadinstitute.org/hc/en-us/articles/360035531852-Intervals-and-interval-lists).
+The GATK-style `.intervals` is poorly described but requires the format `<chr>:<start>-<end>` e.g. `1:1367-1367` for a singular base position. 
+The nomenclature must match that of the chosen reference. 
+For example, Ensembl labels chromosome 1 as "1", not "chr1".
+The GATK-style format has been chosen for its simplicity.
+
+# Setup 
+
+```{r packages}
+library(tidyverse)
+library(magrittr)
+library(parallel)
+library(here)
+library(SeqArray)
+library(AnnotationHub)
+library(purrr)
+library(ggpubr)
+```
+
+```{r options}
+if (interactive()) setwd(here::here())
+theme_set(theme_bw())
+cores <- detectCores() - 1
+```
+
+# Make intervals
+
+The first step is to convert the merged `VCF` file containing variants in all samples into a `GDS` file, which is large so will remain on the HPC system.
+`GDS` objects allow for easy access of the data in `R`.
+
+```{r makeGds}
+vcfPath <- "/hpcfs/users/a1647910/210305_fmr1_snv/12_selectVariants/mergedVcf/mergedVcf.vcf.gz"
+gdsPath <- "/hpcfs/users/a1647910/210305_fmr1_snv/12_selectVariants/gds/mergedGds.gds"
+makeGds <-!file.exists(gdsPath)
+if (makeGds) {
+  dir.create(dirname(gdsPath), recursive = TRUE)
+  seqVCF2GDS(vcfPath, gdsPath)
+}
+```
+
+```{r openGds}
+gds <- seqOpen(gdsPath, readonly = FALSE)
+```
+
+Next we extract information from the `GDS` object into a tibble, and filter for chromosomes 1-25.
+
+```{r SNVs}
+drChrs <- paste(c(1:25))
+snvs <- tibble(
+  variant.id = seqGetData(gds, "variant.id"),
+  chromosome = seqGetData(gds, "chromosome"),
+  position = seqGetData(gds, "position"),
+  allele = seqGetData(gds, "allele")
+) %>%
+  dplyr::filter(chromosome %in% drChrs) %>%
+  as_tibble()
+head(snvs)
+```
+
+Now we can use this data to write the `.intervals` list in the GATK-style format.
+This is also relattively large so will be written to the HPC.
+
+```{r intervals}
+intervalPath <- "/hpcfs/users/a1647910/210305_fmr1_snv/13_countAlleles/intervals/snvs.intervals"
+makeIntervals <- !file.exists(intervalPath)
+if (makeIntervals) {
+  dir.create(dirname(intervalPath), recursive = TRUE)
+  tibble(
+    interval = paste0(
+      snvs$chromosome,
+      ":",
+      snvs$position,
+      "-",
+      snvs$position
+    )
+  ) %>%
+    write.table(
+      file = intervalPath,
+      col.names = FALSE,
+      row.names = FALSE,
+      quote = FALSE
+    )
+}
+```
