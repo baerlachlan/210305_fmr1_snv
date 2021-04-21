@@ -611,4 +611,7 @@ rule countAlleles:
 			-R {input.refFa} \
 			-L {input.intervals} \
 			-O {output.counts}
+
+		## Remove header
+		sed -i '/^@/d' {output.counts}
 		"""
