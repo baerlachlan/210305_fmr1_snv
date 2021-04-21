@@ -28,7 +28,7 @@ knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
 
 # Information
 
-A difficulty encountered when trying to determine allelic counts from the output of the GATK workflow for RNAseq short variant discovery arises due to positions not being reported when homozygous for the reference nucleotide.
+A limitation when trying to determine allelic counts from the output of the GATK workflow for RNAseq short variant discovery arises due to positions not being reported when homozygous for the reference nucleotide.
 This means that for when there is a variant present in some samples, reference and alternate allele counts are available, but other samples contain no information.
 As we are interested in the allelic diversity between **all** samples, an additional step is needed.
 The strategy here is to gather the genomic locations where there was sufficient evidence to suggest single nucleotide variation (SNV) in at least one sample, as determined by the GATK workflow.
@@ -93,7 +93,7 @@ head(snvs)
 ```
 
 Now we can use this data to write the `.intervals` list in the GATK-style format.
-This is also relattively large so will be written to the HPC.
+This is also relatively large so will be written to the HPC.
 
 ```{r intervals}
 intervalPath <- "/hpcfs/users/a1647910/210305_fmr1_snv/13_countAlleles/intervals/snvs.intervals"
